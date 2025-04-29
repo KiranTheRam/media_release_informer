@@ -130,6 +130,23 @@ class RadarrAPI:
             logger.warning(f"Could not parse date: {date_str}")
             return None
 
+    def _extract_time(self, date_str: Optional[str]) -> Optional[str]:
+        """Extract just the time part from a date string and format it nicely"""
+        if not date_str or 'T' not in date_str:
+            return None
+
+        try:
+            # Parse the ISO format datetime
+            if 'Z' in date_str:
+                date_obj = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            else:
+                date_obj = datetime.datetime.fromisoformat(date_str)
+
+            # Format as a nice time (e.g., "3:30 PM")
+            return date_obj.strftime('%I:%M %p')
+        except (ValueError, AttributeError):
+            return None
+
 
 class SonarrAPI:
     def __init__(self, base_url: str, api_key: str, instance_name: str):
@@ -285,27 +302,56 @@ class DiscordNotifier:
                     title = movie.get('title', 'Unknown Title')
                     year = movie.get('year', 'Unknown Year')
 
-                    # Determine the release type (without showing date since we know it's today)
+                    # Determine the release type and time
                     release_types = []
+                    release_time = ""
                     today_str = datetime.datetime.now().strftime('%Y-%m-%d')
 
+                    # Check digital release
                     digital_date = self._extract_date(movie.get('digitalRelease'))
-                    physical_date = self._extract_date(movie.get('physicalRelease'))
-                    cinema_date = self._extract_date(movie.get('inCinemas'))
-
                     if digital_date == today_str:
-                        release_types.append("Digital Release")
-                    if physical_date == today_str:
-                        release_types.append("Physical Release")
-                    if cinema_date == today_str:
-                        release_types.append("In Cinemas")
+                        release_types.append("Digital")
+                        # Try to extract time if available
+                        if movie.get('digitalRelease') and 'T' in movie.get('digitalRelease', ''):
+                            try:
+                                digital_time = self._extract_time(movie.get('digitalRelease'))
+                                if digital_time and not release_time:
+                                    release_time = f" at {digital_time}"
+                            except:
+                                pass
 
-                    release_type = ", ".join(release_types) if release_types else "Released Today"
+                    # Check physical release
+                    physical_date = self._extract_date(movie.get('physicalRelease'))
+                    if physical_date == today_str:
+                        release_types.append("Physical")
+                        # Try to extract time if available
+                        if movie.get('physicalRelease') and 'T' in movie.get('physicalRelease', ''):
+                            try:
+                                physical_time = self._extract_time(movie.get('physicalRelease'))
+                                if physical_time and not release_time:
+                                    release_time = f" at {physical_time}"
+                            except:
+                                pass
+
+                    # Check cinema release
+                    cinema_date = self._extract_date(movie.get('inCinemas'))
+                    if cinema_date == today_str:
+                        release_types.append("Cinema")
+                        # Try to extract time if available
+                        if movie.get('inCinemas') and 'T' in movie.get('inCinemas', ''):
+                            try:
+                                cinema_time = self._extract_time(movie.get('inCinemas'))
+                                if cinema_time and not release_time:
+                                    release_time = f" at {cinema_time}"
+                            except:
+                                pass
+
+                    release_type = f"{', '.join(release_types)} Release" if release_types else "Released Today"
 
                     tmdb_id = movie.get('tmdbId', '')
                     tmdb_link = f"https://www.themoviedb.org/movie/{tmdb_id}" if tmdb_id else ""
 
-                    message += f"- **{title}** ({year}) - {release_type}"
+                    message += f"- **{title}** ({year}) - {release_type}{release_time}"
                     if tmdb_link:
                         message += f" - [TMDB]({tmdb_link})"
                     message += "\n"
@@ -359,8 +405,22 @@ class DiscordNotifier:
                         # Get episode title - most commonly in 'title' field
                         episode_title = episode.get('title', 'Unknown Episode')
 
-                        # Show episode title without the date since we know it's today
-                        message += f"  - S{season_num:02d}E{episode_num:02d} - {episode_title}\n"
+                        # Show episode title and air time if available
+                        air_time = ""
+                        if episode.get('airDateUtc'):
+                            try:
+                                # Parse UTC time and convert to local time with formatted output
+                                if 'Z' in episode['airDateUtc']:
+                                    date_obj = datetime.datetime.fromisoformat(
+                                        episode['airDateUtc'].replace('Z', '+00:00'))
+                                else:
+                                    date_obj = datetime.datetime.fromisoformat(episode['airDateUtc'])
+                                # Format as a nice time (e.g., "3:30 PM")
+                                air_time = f" - {date_obj.strftime('%I:%M %p')}"
+                            except (ValueError, AttributeError):
+                                pass
+
+                        message += f"  - S{season_num:02d}E{episode_num:02d} - {episode_title}{air_time}\n"
                 message += "\n"
 
         # Check if there are no releases today
