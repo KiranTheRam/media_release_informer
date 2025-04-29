@@ -8,6 +8,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from dotenv import load_dotenv
+import pytz  # Import pytz for timezone handling
 
 # Load environment variables from .env file
 env_path = Path('.') / '.env'
@@ -57,6 +58,9 @@ class Config:
         }
     ]
 
+    # Define EST timezone
+    TIMEZONE = pytz.timezone('US/Eastern')
+
 
 class RadarrAPI:
     def __init__(self, base_url: str, api_key: str, instance_name: str):
@@ -82,7 +86,7 @@ class RadarrAPI:
     def get_todays_releases(self) -> List[Dict[str, Any]]:
         """Get all movies being released today"""
         # Get today's date in YYYY-MM-DD format
-        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        today = datetime.datetime.now(Config.TIMEZONE).strftime('%Y-%m-%d')
 
         movies = self.get_movies()
         todays_releases = []
@@ -131,7 +135,7 @@ class RadarrAPI:
             return None
 
     def _extract_time(self, date_str: Optional[str]) -> Optional[str]:
-        """Extract just the time part from a date string and format it nicely"""
+        """Extract just the time part from a date string and format it nicely in EST"""
         if not date_str or 'T' not in date_str:
             return None
 
@@ -142,8 +146,11 @@ class RadarrAPI:
             else:
                 date_obj = datetime.datetime.fromisoformat(date_str)
 
-            # Format as a nice time (e.g., "3:30 PM")
-            return date_obj.strftime('%I:%M %p')
+            # Convert to EST
+            est_date_obj = date_obj.astimezone(Config.TIMEZONE)
+
+            # Format as a nice time (e.g., "3:30 PM EST")
+            return est_date_obj.strftime('%I:%M %p EST')
         except (ValueError, AttributeError):
             return None
 
@@ -203,8 +210,8 @@ class SonarrAPI:
 
     def get_todays_episodes(self) -> List[Dict[str, Any]]:
         """Get all episodes airing today"""
-        today = datetime.datetime.now().strftime('%Y-%m-%d')
-        tomorrow = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        today = datetime.datetime.now(Config.TIMEZONE).strftime('%Y-%m-%d')
+        tomorrow = (datetime.datetime.now(Config.TIMEZONE) + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 
         # Get all episodes in the date range
         all_episodes = self.get_calendar(today, tomorrow)
@@ -225,14 +232,17 @@ class SonarrAPI:
             # Then try UTC date conversion
             elif air_date_utc:
                 try:
-                    # Convert UTC date to local date
+                    # Convert UTC date to EST date
                     if 'Z' in air_date_utc:
                         date_obj = datetime.datetime.fromisoformat(air_date_utc.replace('Z', '+00:00'))
                     else:
                         date_obj = datetime.datetime.fromisoformat(air_date_utc)
 
-                    # Get local date
-                    local_date = date_obj.strftime('%Y-%m-%d')
+                    # Convert to EST
+                    est_date_obj = date_obj.astimezone(Config.TIMEZONE)
+
+                    # Get EST date
+                    local_date = est_date_obj.strftime('%Y-%m-%d')
                     if local_date == today:
                         is_today = True
                         logger.debug(f"Episode matched by airDateUtc conversion: {air_date_utc} -> {local_date}")
@@ -268,7 +278,10 @@ class SonarrAPI:
                     date_obj = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
                 else:
                     date_obj = datetime.datetime.fromisoformat(date_str)
-                return date_obj.strftime('%Y-%m-%d')
+
+                # Convert to EST timezone
+                est_date_obj = date_obj.astimezone(Config.TIMEZONE)
+                return est_date_obj.strftime('%Y-%m-%d')
             else:
                 # It's already just a date
                 datetime.datetime.strptime(date_str, '%Y-%m-%d')  # Validate format
@@ -285,7 +298,7 @@ class DiscordNotifier:
     def send_notification(self, movie_releases: Dict[str, List[Dict[str, Any]]],
                           tv_releases: Dict[str, List[Dict[str, Any]]]) -> bool:
         """Send a notification to Discord with today's releases"""
-        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        today = datetime.datetime.now(Config.TIMEZONE).strftime('%Y-%m-%d')
 
         # Build the message content
         message = f"# Media Releases for {today}\n\n"
@@ -305,7 +318,7 @@ class DiscordNotifier:
                     # Determine the release type and time
                     release_types = []
                     release_time = ""
-                    today_str = datetime.datetime.now().strftime('%Y-%m-%d')
+                    today_str = datetime.datetime.now(Config.TIMEZONE).strftime('%Y-%m-%d')
 
                     # Check digital release
                     digital_date = self._extract_date(movie.get('digitalRelease'))
@@ -409,14 +422,18 @@ class DiscordNotifier:
                         air_time = ""
                         if episode.get('airDateUtc'):
                             try:
-                                # Parse UTC time and convert to local time with formatted output
+                                # Parse UTC time and convert to EST time with formatted output
                                 if 'Z' in episode['airDateUtc']:
                                     date_obj = datetime.datetime.fromisoformat(
                                         episode['airDateUtc'].replace('Z', '+00:00'))
                                 else:
                                     date_obj = datetime.datetime.fromisoformat(episode['airDateUtc'])
-                                # Format as a nice time (e.g., "3:30 PM")
-                                air_time = f" - {date_obj.strftime('%I:%M %p')}"
+
+                                # Convert to EST
+                                est_date_obj = date_obj.astimezone(Config.TIMEZONE)
+
+                                # Format as a nice time (e.g., "3:30 PM EST")
+                                air_time = f" - {est_date_obj.strftime('%I:%M %p EST')}"
                             except (ValueError, AttributeError):
                                 pass
 
@@ -455,11 +472,34 @@ class DiscordNotifier:
                     date_obj = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
                 else:
                     date_obj = datetime.datetime.fromisoformat(date_str)
-                return date_obj.strftime('%Y-%m-%d')
+
+                # Convert to EST timezone
+                est_date_obj = date_obj.astimezone(Config.TIMEZONE)
+                return est_date_obj.strftime('%Y-%m-%d')
             else:
                 # It's already just a date
                 datetime.datetime.strptime(date_str, '%Y-%m-%d')  # Validate format
                 return date_str
+        except (ValueError, AttributeError):
+            return None
+
+    def _extract_time(self, date_str: Optional[str]) -> Optional[str]:
+        """Extract just the time part from a date string and format it nicely in EST"""
+        if not date_str or 'T' not in date_str:
+            return None
+
+        try:
+            # Parse the ISO format datetime
+            if 'Z' in date_str:
+                date_obj = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            else:
+                date_obj = datetime.datetime.fromisoformat(date_str)
+
+            # Convert to EST timezone
+            est_date_obj = date_obj.astimezone(Config.TIMEZONE)
+
+            # Format as a nice time (e.g., "3:30 PM EST")
+            return est_date_obj.strftime('%I:%M %p EST')
         except (ValueError, AttributeError):
             return None
 
