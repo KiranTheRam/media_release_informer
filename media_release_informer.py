@@ -81,14 +81,54 @@ class RadarrAPI:
 
     def get_todays_releases(self) -> List[Dict[str, Any]]:
         """Get all movies being released today"""
+        # Get today's date in YYYY-MM-DD format
         today = datetime.datetime.now().strftime('%Y-%m-%d')
+
         movies = self.get_movies()
-        return [
-            movie for movie in movies
-            if movie.get('digitalRelease') and movie.get('digitalRelease', '').startswith(today)
-               or movie.get('physicalRelease') and movie.get('physicalRelease', '').startswith(today)
-               or movie.get('inCinemas') and movie.get('inCinemas', '').startswith(today)
-        ]
+        todays_releases = []
+
+        for movie in movies:
+            is_today = False
+
+            # Try exact date matches first
+            digital_release = self._extract_date(movie.get('digitalRelease'))
+            physical_release = self._extract_date(movie.get('physicalRelease'))
+            cinema_release = self._extract_date(movie.get('inCinemas'))
+
+            if digital_release == today or physical_release == today or cinema_release == today:
+                is_today = True
+
+            # Fallback approach for dates that might not parse properly
+            if not is_today:
+                # Check if any release type contains today's date string
+                digital = movie.get('digitalRelease', '')
+                physical = movie.get('physicalRelease', '')
+                cinema = movie.get('inCinemas', '')
+
+                if (digital and today in digital) or (physical and today in physical) or (cinema and today in cinema):
+                    is_today = True
+
+            if is_today:
+                todays_releases.append(movie)
+
+        logger.info(f"Found {len(todays_releases)} movies releasing today after filtering")
+        return todays_releases
+
+    def _extract_date(self, date_str: Optional[str]) -> Optional[str]:
+        """Extract just the date part (YYYY-MM-DD) from a date string"""
+        if not date_str:
+            return None
+
+        # Handle ISO format dates that might include time
+        try:
+            # Try to parse as datetime and extract just the date part
+            date_part = date_str.split('T')[0] if 'T' in date_str else date_str
+            # Validate that it's a proper date
+            datetime.datetime.strptime(date_part, '%Y-%m-%d')
+            return date_part
+        except (ValueError, AttributeError):
+            logger.warning(f"Could not parse date: {date_str}")
+            return None
 
 
 class SonarrAPI:
@@ -148,7 +188,77 @@ class SonarrAPI:
         """Get all episodes airing today"""
         today = datetime.datetime.now().strftime('%Y-%m-%d')
         tomorrow = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-        return self.get_calendar(today, tomorrow)
+
+        # Get all episodes in the date range
+        all_episodes = self.get_calendar(today, tomorrow)
+
+        # Check each episode more carefully and log what we're analyzing
+        todays_episodes = []
+        for episode in all_episodes:
+            air_date_utc = episode.get('airDateUtc')
+            air_date = episode.get('airDate')
+
+            is_today = False
+
+            # First try exact date matches
+            if air_date and air_date.startswith(today):
+                is_today = True
+                logger.debug(f"Episode matched by airDate: {air_date}")
+
+            # Then try UTC date conversion
+            elif air_date_utc:
+                try:
+                    # Convert UTC date to local date
+                    if 'Z' in air_date_utc:
+                        date_obj = datetime.datetime.fromisoformat(air_date_utc.replace('Z', '+00:00'))
+                    else:
+                        date_obj = datetime.datetime.fromisoformat(air_date_utc)
+
+                    # Get local date
+                    local_date = date_obj.strftime('%Y-%m-%d')
+                    if local_date == today:
+                        is_today = True
+                        logger.debug(f"Episode matched by airDateUtc conversion: {air_date_utc} -> {local_date}")
+                except (ValueError, AttributeError):
+                    # If we can't parse, fall back to checking starts with
+                    if air_date_utc.startswith(today):
+                        is_today = True
+                        logger.debug(f"Episode matched by airDateUtc startswith: {air_date_utc}")
+
+            # As a fallback, use the original approach
+            # This is necessary because sometimes the date format in Sonarr's API can be inconsistent
+            if not is_today and ((air_date and today in air_date) or (air_date_utc and today in air_date_utc)):
+                is_today = True
+                logger.debug(f"Episode matched by fallback contains: airDate={air_date}, airDateUtc={air_date_utc}")
+
+            if is_today:
+                todays_episodes.append(episode)
+
+        logger.info(f"Found {len(todays_episodes)} episodes airing today after filtering")
+        return todays_episodes
+
+    def _extract_date(self, date_str: Optional[str]) -> Optional[str]:
+        """Extract just the date part (YYYY-MM-DD) from a date string"""
+        if not date_str:
+            return None
+
+        # Handle ISO format dates that might include time
+        try:
+            # Try to parse as datetime and extract just the date part
+            if 'T' in date_str:
+                # Handle ISO format with timezone
+                if 'Z' in date_str:
+                    date_obj = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                else:
+                    date_obj = datetime.datetime.fromisoformat(date_str)
+                return date_obj.strftime('%Y-%m-%d')
+            else:
+                # It's already just a date
+                datetime.datetime.strptime(date_str, '%Y-%m-%d')  # Validate format
+                return date_str
+        except (ValueError, AttributeError):
+            logger.warning(f"Could not parse date: {date_str}")
+            return None
 
 
 class DiscordNotifier:
@@ -175,14 +285,22 @@ class DiscordNotifier:
                     title = movie.get('title', 'Unknown Title')
                     year = movie.get('year', 'Unknown Year')
 
-                    # Determine the release type
-                    release_type = ""
-                    if movie.get('digitalRelease', '').startswith(today):
-                        release_type = "Digital Release"
-                    elif movie.get('physicalRelease', '').startswith(today):
-                        release_type = "Physical Release"
-                    elif movie.get('inCinemas', '').startswith(today):
-                        release_type = "In Cinemas"
+                    # Determine the release type (without showing date since we know it's today)
+                    release_types = []
+                    today_str = datetime.datetime.now().strftime('%Y-%m-%d')
+
+                    digital_date = self._extract_date(movie.get('digitalRelease'))
+                    physical_date = self._extract_date(movie.get('physicalRelease'))
+                    cinema_date = self._extract_date(movie.get('inCinemas'))
+
+                    if digital_date == today_str:
+                        release_types.append("Digital Release")
+                    if physical_date == today_str:
+                        release_types.append("Physical Release")
+                    if cinema_date == today_str:
+                        release_types.append("In Cinemas")
+
+                    release_type = ", ".join(release_types) if release_types else "Released Today"
 
                     tmdb_id = movie.get('tmdbId', '')
                     tmdb_link = f"https://www.themoviedb.org/movie/{tmdb_id}" if tmdb_id else ""
@@ -201,10 +319,6 @@ class DiscordNotifier:
                     message += "## TV Episodes\n\n"
                     has_episodes = True
                 message += f"### {instance}\n"
-
-                # Let's add debug logging to see the structure
-                if episodes and len(episodes) > 0:
-                    logger.debug(f"Sample episode structure: {json.dumps(episodes[0], indent=2)}")
 
                 # Group episodes by series
                 series_episodes = {}
@@ -245,18 +359,8 @@ class DiscordNotifier:
                         # Get episode title - most commonly in 'title' field
                         episode_title = episode.get('title', 'Unknown Episode')
 
-                        # Get air date
-                        air_date = episode.get('airDate', 'Unknown Date')
-                        if not air_date and 'airDateUtc' in episode:
-                            air_date_utc = episode.get('airDateUtc')
-                            try:
-                                # Try to parse ISO format date
-                                date_obj = datetime.datetime.fromisoformat(air_date_utc.replace('Z', '+00:00'))
-                                air_date = date_obj.strftime('%Y-%m-%d')
-                            except (ValueError, AttributeError):
-                                air_date = 'Unknown Date'
-
-                        message += f"  - S{season_num:02d}E{episode_num:02d} - {episode_title} ({air_date})\n"
+                        # Show episode title without the date since we know it's today
+                        message += f"  - S{season_num:02d}E{episode_num:02d} - {episode_title}\n"
                 message += "\n"
 
         # Check if there are no releases today
@@ -276,6 +380,28 @@ class DiscordNotifier:
         except requests.exceptions.RequestException as e:
             logger.error(f"Error sending notification: {e}")
             return False
+
+    def _extract_date(self, date_str: Optional[str]) -> Optional[str]:
+        """Extract just the date part (YYYY-MM-DD) from a date string"""
+        if not date_str:
+            return None
+
+        # Handle ISO format dates that might include time
+        try:
+            # Try to parse as datetime and extract just the date part
+            if 'T' in date_str:
+                # Handle ISO format with timezone
+                if 'Z' in date_str:
+                    date_obj = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                else:
+                    date_obj = datetime.datetime.fromisoformat(date_str)
+                return date_obj.strftime('%Y-%m-%d')
+            else:
+                # It's already just a date
+                datetime.datetime.strptime(date_str, '%Y-%m-%d')  # Validate format
+                return date_str
+        except (ValueError, AttributeError):
+            return None
 
 
 def main():
