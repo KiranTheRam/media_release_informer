@@ -117,11 +117,29 @@ class SonarrAPI:
         try:
             params = {
                 "start": start_date,
-                "end": end_date
+                "end": end_date,
+                "includeEpisodeFile": "true",  # Include file info if available
+                "includeEpisodeImages": "false",  # No need for images
+                "includeSeriesImages": "false"  # No need for images
             }
             response = requests.get(f"{self.base_url}/api/v3/calendar", headers=self.headers, params=params)
             response.raise_for_status()
-            return response.json()
+            calendar_items = response.json()
+
+            # Enrich calendar items with series information
+            for item in calendar_items:
+                if 'seriesId' in item and not ('series' in item and 'title' in item.get('series', {})):
+                    try:
+                        series_response = requests.get(
+                            f"{self.base_url}/api/v3/series/{item['seriesId']}",
+                            headers=self.headers
+                        )
+                        if series_response.status_code == 200:
+                            item['series'] = series_response.json()
+                    except requests.exceptions.RequestException:
+                        pass  # If we can't get series info, just continue
+
+            return calendar_items
         except requests.exceptions.RequestException as e:
             logger.error(f"Error fetching calendar from {self.instance_name}: {e}")
             return []
@@ -184,17 +202,34 @@ class DiscordNotifier:
                     has_episodes = True
                 message += f"### {instance}\n"
 
+                # Let's add debug logging to see the structure
+                if episodes and len(episodes) > 0:
+                    logger.debug(f"Sample episode structure: {json.dumps(episodes[0], indent=2)}")
+
                 # Group episodes by series
                 series_episodes = {}
                 for episode in episodes:
-                    series_title = episode.get('series', {}).get('title', 'Unknown Series')
+                    # Use a consistent approach - first try to get series info from the parent object
+                    if 'series' in episode and isinstance(episode['series'], dict):
+                        series_title = episode['series'].get('title', 'Unknown Series')
+                    # Then try other fields
+                    elif 'seriesTitle' in episode:
+                        series_title = episode.get('seriesTitle', 'Unknown Series')
+                    else:
+                        series_title = 'Unknown Series'
+                        logger.warning(f"Could not find series title for episode: {episode}")
+
                     if series_title not in series_episodes:
                         series_episodes[series_title] = []
                     series_episodes[series_title].append(episode)
 
                 # Add episodes for each series
                 for series_title, series_eps in series_episodes.items():
-                    tvdb_id = series_eps[0].get('series', {}).get('tvdbId', '')
+                    # Get TVDB ID if available
+                    tvdb_id = ''
+                    if 'series' in series_eps[0] and isinstance(series_eps[0]['series'], dict):
+                        tvdb_id = series_eps[0]['series'].get('tvdbId', '')
+
                     tvdb_link = f"https://thetvdb.com/series/{tvdb_id}" if tvdb_id else ""
 
                     message += f"- **{series_title}**"
@@ -203,10 +238,23 @@ class DiscordNotifier:
                     message += "\n"
 
                     for episode in series_eps:
+                        # Get season and episode numbers
                         season_num = episode.get('seasonNumber', 0)
                         episode_num = episode.get('episodeNumber', 0)
+
+                        # Get episode title - most commonly in 'title' field
                         episode_title = episode.get('title', 'Unknown Episode')
+
+                        # Get air date
                         air_date = episode.get('airDate', 'Unknown Date')
+                        if not air_date and 'airDateUtc' in episode:
+                            air_date_utc = episode.get('airDateUtc')
+                            try:
+                                # Try to parse ISO format date
+                                date_obj = datetime.datetime.fromisoformat(air_date_utc.replace('Z', '+00:00'))
+                                air_date = date_obj.strftime('%Y-%m-%d')
+                            except (ValueError, AttributeError):
+                                air_date = 'Unknown Date'
 
                         message += f"  - S{season_num:02d}E{episode_num:02d} - {episode_title} ({air_date})\n"
                 message += "\n"
@@ -231,6 +279,7 @@ class DiscordNotifier:
 
 
 def main():
+    # logging.getLogger().setLevel(logging.DEBUG)
     logger.info("Starting media release notifier...")
 
     # Validate configuration
