@@ -38,7 +38,7 @@ A Python application that sends daily Discord notifications about movies and TV 
 ### Running manually
 
 ```
-python release_notifier.py
+python media_release_notifier.py
 ```
 
 ### Setting up a daily cron job
@@ -52,7 +52,7 @@ To run the script automatically every morning, add a cron job:
 
 2. Add a line to run the script at 8:00 AM every day (adjust the path to match your setup):
    ```
-   0 8 * * * cd /path/to/media-release-notifier && python release_notifier.py
+   0 8 * * * cd /path/to/media-release-notifier && python media_release_notifier.py
    ```
 
 ### Running with Docker
@@ -66,9 +66,9 @@ To run the script automatically every morning, add a cron job:
    COPY requirements.txt .
    RUN pip install --no-cache-dir -r requirements.txt
    
-   COPY release_notifier.py .
+   COPY media_release_notifier.py .
    
-   CMD ["python", "release_notifier.py"]
+   CMD ["python", "media_release_notifier.py"]
    ```
 
 2. Create a requirements.txt file:

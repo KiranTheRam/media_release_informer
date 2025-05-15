@@ -303,14 +303,10 @@ class DiscordNotifier:
         # Build the message content
         message = f"# Media Releases for {today}\n\n"
 
-        # Add movie releases to the message
-        has_movies = False
+        # Add movie releases to the message (no "Movies" header)
         for instance, movies in movie_releases.items():
             if movies:
-                if not has_movies:
-                    message += "## Movies\n\n"
-                    has_movies = True
-                message += f"### {instance}\n"
+                message += f"## {instance}\n"
                 for movie in movies:
                     title = movie.get('title', 'Unknown Title')
                     year = movie.get('year', 'Unknown Year')
@@ -361,23 +357,12 @@ class DiscordNotifier:
 
                     release_type = f"{', '.join(release_types)} Release" if release_types else "Released Today"
 
-                    tmdb_id = movie.get('tmdbId', '')
-                    tmdb_link = f"https://www.themoviedb.org/movie/{tmdb_id}" if tmdb_id else ""
+                    message += f"- **{title}** ({year}) - {release_type}{release_time}\n"
 
-                    message += f"- **{title}** ({year}) - {release_type}{release_time}"
-                    if tmdb_link:
-                        message += f" - [TMDB]({tmdb_link})"
-                    message += "\n"
-                message += "\n"
-
-        # Add TV episodes to the message
-        has_episodes = False
+        # Add TV episodes to the message (no "TV Episodes" header)
         for instance, episodes in tv_releases.items():
             if episodes:
-                if not has_episodes:
-                    message += "## TV Episodes\n\n"
-                    has_episodes = True
-                message += f"### {instance}\n"
+                message += f"## {instance}\n"
 
                 # Group episodes by series
                 series_episodes = {}
@@ -398,17 +383,8 @@ class DiscordNotifier:
 
                 # Add episodes for each series
                 for series_title, series_eps in series_episodes.items():
-                    # Get TVDB ID if available
-                    tvdb_id = ''
-                    if 'series' in series_eps[0] and isinstance(series_eps[0]['series'], dict):
-                        tvdb_id = series_eps[0]['series'].get('tvdbId', '')
-
-                    tvdb_link = f"https://thetvdb.com/series/{tvdb_id}" if tvdb_id else ""
-
-                    message += f"- **{series_title}**"
-                    if tvdb_link:
-                        message += f" - [TVDB]({tvdb_link})"
-                    message += "\n"
+                    # Show series title without TVDB link
+                    message += f"- **{series_title}**\n"
 
                     for episode in series_eps:
                         # Get season and episode numbers
@@ -438,10 +414,9 @@ class DiscordNotifier:
                                 pass
 
                         message += f"  - S{season_num:02d}E{episode_num:02d} - {episode_title}{air_time}\n"
-                message += "\n"
 
         # Check if there are no releases today
-        if not has_movies and not has_episodes:
+        if not any(movies for movies in movie_releases.values()) and not any(episodes for episodes in tv_releases.values()):
             message += "No monitored content is being released today.\n"
 
         # Send the message to Discord
