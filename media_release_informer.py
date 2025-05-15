@@ -357,14 +357,7 @@ class DiscordNotifier:
 
                     release_type = f"{', '.join(release_types)} Release" if release_types else "Released Today"
 
-                    tmdb_id = movie.get('tmdbId', '')
-                    tmdb_link = f"https://www.themoviedb.org/movie/{tmdb_id}" if tmdb_id else ""
-
-                    message += f"- **{title}** ({year}) - {release_type}{release_time}"
-                    if tmdb_link:
-                        message += f" - [TMDB]({tmdb_link})"
-                    message += "\n"
-                message += "\n"
+                    message += f"- **{title}** ({year}) - {release_type}{release_time}\n"
 
         # Add TV episodes to the message (no "TV Episodes" header)
         for instance, episodes in tv_releases.items():
@@ -421,7 +414,6 @@ class DiscordNotifier:
                                 pass
 
                         message += f"  - S{season_num:02d}E{episode_num:02d} - {episode_title}{air_time}\n"
-                message += "\n"
 
         # Check if there are no releases today
         if not any(movies for movies in movie_releases.values()) and not any(episodes for episodes in tv_releases.values()):
